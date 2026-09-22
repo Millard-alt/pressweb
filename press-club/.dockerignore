@@ -1,0 +1,9 @@
+node_modules
+backend/node_modules
+**/.env
+.git
+backend/data.db*
+backend/*.log
+backend/uploads/*
+!backend/uploads/.gitkeep
+frontend/__check.js
