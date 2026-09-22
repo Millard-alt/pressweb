@@ -83,8 +83,10 @@ INSERT INTO categories (name) VALUES
   ('Music & Arts'),('Science & Tech'),('Community'),('Editorials')
 ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO settings (key, value) OVERRIDING SYSTEM VALUE VALUES
+INSERT INTO settings (key, value) VALUES
   ('edition_line','VOL. 1 · NO. 14'),
   ('breaking_enabled','1'),
-  ('breaking_text','Robotics team confirmed for Saturday''s regional qualifier — first bid in four years.')
+  ('breaking_text','Robotics team confirmed for Saturday''s regional qualifier — first bid in four years.'),
+  ('forced_notifications','0'),
+  ('one_signal_app_id','')
 ON CONFLICT (key) DO NOTHING;

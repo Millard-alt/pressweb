@@ -3,7 +3,8 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
-require('./db'); // opens the database and seeds it on first run
+const database = require('./db'); // opens the database and seeds it on first run
+const { ready } = database;
 
 const authRoutes = require('./routes/auth');
 const contentRoutes = require('./routes/content');
@@ -39,12 +40,22 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(frontendDir, 'index.html'));
 });
 
-// Basic error handler (e.g. multer errors that slip through)
+// Basic error handler (async route failures land here thanks to lib/asyncHandler)
 app.use((err, req, res, next) => {
   console.error(err);
+  if (res.headersSent) return next(err);
   res.status(500).json({ error: 'Server error.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`The Wire is running at http://localhost:${PORT}`);
-});
+// Don't accept traffic until the database schema is in place and reachable.
+ready
+  .then(() => {
+    app.listen(PORT, () => {
+      const backend = database.USE_POSTGRES ? 'Postgres' : 'SQLite';
+      console.log(`The Wire is running at http://localhost:${PORT} [${backend}]`);
+    });
+  })
+  .catch((err) => {
+    console.error('Startup aborted — database unavailable.');
+    process.exit(1);
+  });

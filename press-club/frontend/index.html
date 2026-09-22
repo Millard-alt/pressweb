@@ -324,6 +324,20 @@ footer .foot-tag{ font-family:'Inter'; font-size:.7rem; opacity:.55; margin-top:
 .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .admin-form input[type=file]{ padding:6px; }
 
+/* ============ FORCED NOTIFICATIONS GATE ============ */
+#notifGate.hidden{ display:none; }
+#notifGate{ position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(10,8,6,.6); backdrop-filter:blur(4px); }
+.gate-card{ background:var(--paper); color:var(--ink); border:1px solid var(--rule); border-radius:12px; max-width:480px; width:100%; padding:28px 26px; box-shadow:var(--shadow); text-align:left; max-height:90vh; overflow:auto; }
+.gate-icon{ font-size:34px; }
+.gate-card h2{ margin:12px 0 6px; font-family:'Playfair Display'; }
+.gate-sub{ color:var(--ink-soft); margin:0 0 16px; font-size:.95rem; }
+.gate-steps{ background:var(--panel); border:1px solid var(--rule); border-radius:8px; padding:10px 14px; font-size:.84rem; margin:0 0 14px; }
+.gate-steps p{ margin:8px 0; }
+.gate-steps li{ margin:5px 0; line-height:1.4; }
+.gate-error{ color:var(--red-deep); font-size:.8rem; margin-top:10px; }
+.gate-card .btn{ width:100%; margin-top:8px; }
+.gate-admin-link{ display:block; text-align:center; margin-top:14px; font-size:.78rem; color:var(--ink-soft); background:none; border:none; cursor:pointer; text-decoration:underline; }
+
 @media (prefers-reduced-motion: reduce){ *{ animation-duration:.001s !important; transition-duration:.001s !important; } }
 @media (min-width:640px){
   .edition-stack{ max-width:560px; margin:0 auto; }
@@ -533,6 +547,13 @@ footer .foot-tag{ font-family:'Inter'; font-size:.7rem; opacity:.55; margin-top:
           </div>
         </div>
         <div class="psec">
+          <h4>Notification policy</h4>
+          <div class="admin-form">
+            <label class="switch"><input type="checkbox" id="setForcedNotifications" /> Force notifications</label>
+            <div class="upload-note" style="margin-top:8px;">When this is ON, visitors MUST grant push notifications to open the site. If someone declines or blocks them, we show an error with step-by-step instructions for their device — and the site stays locked until they allow notifications. Needs the OneSignal App ID above.</div>
+          </div>
+        </div>
+        <div class="psec">
           <h4>Categories</h4>
           <div class="admin-form">
             <div class="inline"><input id="newCat" placeholder="Add a category" /><button class="btn gold" id="addCat">Add</button></div>
@@ -672,6 +693,7 @@ tabsEl.addEventListener('click', e=>{
 function renderPublicContent(){
   document.getElementById('editionLine').textContent = pressData.editionLine || 'VOL. 1 · NO. 14';
   initOneSignal(pressData.onesignalAppId);
+  enforceNotifications();
   if(pressData.breaking){
     bkEl.classList.remove('gone');
     bkEl.querySelector('.bk-text').textContent = pressData.breakingText || '';
@@ -788,6 +810,102 @@ function subscribeAlerts(){
 }
 document.getElementById('alertBtn').onclick = subscribeAlerts;
 document.getElementById('alertBtn2').onclick = subscribeAlerts;
+
+/* ---- Forced notifications gate ---- */
+const notifGate = document.getElementById('notifGate');
+const gateStepsEl = document.getElementById('gateSteps');
+const gateErrorEl = document.getElementById('gateError');
+const gateDeniedWrap = document.getElementById('gateDeniedWrap');
+
+function gateDeviceSteps(){
+  const ua = navigator.userAgent || '';
+  if(/iPhone|iPad|iPod/.test(ua)) return [
+    'Open this site in Safari (web push on iPhone works only in Safari, after adding to your Home Screen).',
+    'Tap the Share button (square with an up arrow).',
+    'Tap "Add to Home Screen", then open The Wire from your Home Screen.',
+    'When the permission prompt appears, tap "Allow".'
+  ];
+  if(/Android/i.test(ua)) return [
+    'Tap the lock / "i" (info) icon in the address bar.',
+    'Open "Site settings" (or "Permissions" → "Notifications").',
+    'Set Notifications to "Allow" (or "Ask").',
+    'Tap the 🔔 "Allow notifications" button above.'
+  ];
+  if(/Firefox/i.test(ua)) return [
+    'Click the padlock icon in the address bar.',
+    'Open "Permissions" → "Notifications".',
+    'Choose "Allow" for this site.',
+    'Then hit "I\'ve enabled them — reload" below.'
+  ];
+  return [
+    'Click the 🔔 "Allow notifications" button above.',
+    'In the browser pop-up choose "Allow".',
+    'If no pop-up appears, click the padlock in the address bar → Site settings → Notifications → Allow.',
+    'Then hit "I\'ve enabled them — reload" below.'
+  ];
+}
+
+function showGate(denied){
+  gateStepsEl.innerHTML = (denied ? gateDeviceSteps() : []).map(s=>`<li>${s}</li>`).join('');
+  gateDeniedWrap.style.display = denied ? 'block' : 'none';
+  gateErrorEl.textContent = '';
+  notifGate.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  // staff can always get back in so the policy can be switched off
+  document.getElementById('gateAdminLink').style.display = localStorage.getItem('wire_token') ? 'block' : 'none';
+}
+function hideGate(){
+  notifGate.classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+async function oneSignalEnabled(){
+  if(!window.OneSignal) return false;
+  try{ return !!(await OneSignal.Notifications.isPushNotificationsEnabled()); }
+  catch(e){ return false; }
+}
+function requestOneSignalPermission(){
+  if(!window.OneSignal) return false;
+  return new Promise((resolve)=>{
+    OneSignal.push(()=>{
+      try{ OneSignal.Notifications.requestPermission().then(()=>resolve(true)).catch(()=>resolve(false)); }
+      catch(e){ resolve(false); }
+    });
+  });
+}
+
+async function enforceNotifications(){
+  if(!pressData || !pressData.forcedNotifications) return;          // policy OFF -> always allow
+  if(!pressData.onesignalAppId || !window.OneSignal){              // no way to satisfy it -> never lock out
+    console.warn('Forced notifications is ON but OneSignal is not configured.');
+    return;
+  }
+  await new Promise(r=>setTimeout(r, 1500));                        // let OneSignal initialise
+  if(await oneSignalEnabled()){ hideGate(); return; }
+  const blocked = !!(window.Notification && Notification.permission === 'denied');
+  showGate(blocked);
+}
+
+document.getElementById('gateEnable').onclick = async ()=>{
+  gateErrorEl.textContent = '';
+  const ok = await requestOneSignalPermission();
+  await new Promise(r=>setTimeout(r, 500));
+  if(await oneSignalEnabled()){ hideGate(); return; }
+  if(window.Notification && Notification.permission === 'denied'){
+    gateErrorEl.textContent = 'Notifications are blocked in your browser — use the steps below to switch them back on for this site.';
+    showGate(true);
+  } else {
+    gateErrorEl.textContent = 'We didn\u2019t get permission. Tap "Allow" in the browser pop-up, or follow the steps for your device.';
+    showGate(false);
+  }
+};
+document.getElementById('gateRefresh').onclick = ()=> location.reload();
+document.getElementById('gateAdminLink').onclick = (e)=>{
+  e.preventDefault();
+  hideGate();
+  adminEl.classList.add('show');
+  showAdminView();
+};
 
 /* ADMIN */
 const adminEl = document.getElementById('admin');
@@ -955,6 +1073,7 @@ async function loadOwnerSettings(){
     document.getElementById('setBreakingEnabled').checked = !!s.breaking_enabled;
     document.getElementById('setBreakingText').value = s.breaking_text || '';
     document.getElementById('setEditionLine').value = s.edition_line || '';
+    document.getElementById('setForcedNotifications').checked = !!s.forced_notifications;
     document.getElementById('setOneSignal').value = s.one_signal_app_id || '';
     renderCatList();
   }catch(err){ showToast(err.message); }
@@ -965,6 +1084,7 @@ document.getElementById('saveSettings').onclick = async ()=>{
       edition_line: document.getElementById('setEditionLine').value,
       breaking_enabled: document.getElementById('setBreakingEnabled').checked,
       breaking_text: document.getElementById('setBreakingText').value,
+      forced_notifications: document.getElementById('setForcedNotifications').checked,
       one_signal_app_id: document.getElementById('setOneSignal').value.trim()
     })});
     showToast('Settings saved'); loadContent();
@@ -1135,5 +1255,21 @@ window.addEventListener('scroll', ()=>{
   navLinks.forEach(a=> a.classList.toggle('active', a.getAttribute('href')==='#'+current));
 }, { passive:true });
 </script>
+<!-- Forced notifications gate -->
+<div id="notifGate" class="hidden">
+  <div class="gate-card">
+    <div class="gate-icon">🔔</div>
+    <h2>Notifications are required</h2>
+    <p class="gate-sub">The Wire needs your permission to show push notifications before you can continue.</p>
+    <button class="btn ink" id="gateEnable">Allow notifications</button>
+    <div id="gateDeniedWrap" style="display:none">
+      <p class="gate-sub" style="margin-top:14px;">Notifications are currently blocked or still off. Turn them on for this device:</p>
+      <div class="gate-steps" id="gateSteps"></div>
+    </div>
+    <button class="btn" id="gateRefresh">I've enabled them — reload</button>
+    <div class="gate-error" id="gateError"></div>
+    <button class="gate-admin-link" id="gateAdminLink" style="display:none">Continue to admin as staff</button>
+  </div>
+</div>
 </body>
 </html>
